@@ -21,6 +21,7 @@ from src.analysis.backtest import replay
 from src.storage.database import Database
 from src.utils.validation import utcnow
 from src.linked_market_ui import linked_market_panel
+from src.us_forecast_ui import us_forecast_page
 
 st.set_page_config(page_title='Polymarket AI Scanner v2', page_icon='📊', layout='wide')
 st.title('Polymarket AI Scanner v2')
@@ -33,7 +34,7 @@ if 'progress' not in st.session_state:
 settings = st.session_state.settings
 if st.session_state.get('storage_notice'):
     st.warning(st.session_state.storage_notice)
-page = st.sidebar.radio('Página', ['Market Scanner', 'Election Forecast', 'Backtesting', 'Settings'])
+page = st.sidebar.radio('Página', ['Market Scanner', 'Election Forecast', 'EUA — Pré-eleição', 'Backtesting', 'Settings'])
 st.sidebar.info(f'Modo: {settings.mode}\n\nMotor rápido: posterior de Laplace; NUTS disponível via CLI.')
 
 
@@ -88,7 +89,10 @@ def record_forecast(f, snapshot, key):
     persist_once(f'forecast:{key}', 'forecasts', f.to_dict(), f.timestamp, f.model_version)
 
 
-if page == 'Settings':
+if page == 'EUA — Pré-eleição':
+    us_forecast_page(settings, persist_once)
+
+elif page == 'Settings':
     st.subheader('Configurações locais')
     with st.form('settings_form'):
         mode = st.selectbox('Modo', ['DEMO', 'LIVE_DATA'], index=['DEMO', 'LIVE_DATA'].index(settings.mode))

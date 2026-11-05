@@ -29,11 +29,11 @@ python main.py --progress 0.5 --draws 10000
 python main.py --export-demo --draws 1000
 # Backend alternativo PyMC / NUTS (mais lento; requer compilador C/C++)
 python main.py --progress 0.5 --draws 1000 --backend pymc
-# Testes, incluindo quatro páginas e fallback offline
+# Testes, incluindo os dois modelos e fallback offline
 python -m pytest -q
 ```
 
-## Uso das quatro páginas
+## Uso das páginas
 
 - **Market Scanner:** livros YES/NO, bid/ask, preço médio executável por quantidade,
   preços indicativos separados, volume, liquidez, EV, faixa de sensibilidade e
@@ -42,6 +42,9 @@ python -m pytest -q
 - **Election Forecast:** inicie ou avance a eleição em passos de 10%; acompanhe
   parcial, projeção, IC de 95%, probabilidade de vitória e evolução temporal Plotly.
   Todos os resultados dessa página são explicitamente **SIMULADOS**.
+- **EUA — Pré-eleição:** modelo separado de pesquisas, histórico por estado e
+  Colégio Eleitoral. Fontes públicas, CSV do usuário ou DEMO, sem alterar a
+  simulação de apuração. Consulte a seção específica abaixo.
 - **Backtesting:** replay DEMO ou CSV histórico, rótulo final separado e CSV de
   preços executáveis opcional. Apresenta Brier, log loss, erro absoluto de votos,
   calibração descritiva e, se houver preços e taxas, uma operação hipotética.
@@ -98,6 +101,97 @@ do modelo, não um resultado oficial nem garantia de vitória. Dados antigos e
 timestamps futuros são tratados; regras de resolução exigem confirmação manual.
 Esportes, eleições com outras regras e demais categorias precisam de modelos e
 conectores próprios antes de oferecer previsões independentes.
+
+## Modelo separado: EUA — Pré-eleição
+
+Abra **EUA — Pré-eleição**, escolha **Dados públicos reais**, selecione um
+confronto e toque em **Calcular cenário pré-eleitoral**. A página consulta dados
+públicos gratuitos e exibe probabilidades condicionais de atingir 270 eleitores,
+intervalo de votos no Colégio Eleitoral, mapa estadual, pesquisas utilizadas,
+fontes, timestamps e diagnóstico. O modelo antigo continua em **Election Forecast**;
+os estados de sessão dos dois modelos são independentes.
+
+Fontes e crédito:
+
+- Pesquisas: [ElectionsUSA](https://electionsusa.org/data/), APIs documentadas
+  para Vance × Newsom, Vance × Ocasio-Cortez e Vance × Buttigieg. São dados de um
+  agregador independente, não uma autoridade eleitoral. Compilação CC BY 4.0;
+  campos derivados de Wikipedia CC BY-SA 4.0. Cada pesquisa preserva o link para
+  sua fonte original; PDFs/documentos originais não são auditados pelo app.
+- Histórico 2024: [compilação de Tony McGovern](https://github.com/tonmcg/US_County_Level_Election_Results_08-24),
+  votos republicanos/democratas agregados por estado. É histórico de partido,
+  não uma pesquisa de intenção de voto nos candidatos de 2028.
+- Alocação: [National Archives](https://www.archives.gov/electoral-college/allocation),
+  regras/quantidades vigentes para 2024 e 2028, 538 eleitores e maioria de 270.
+
+Não precisa de chaves ou upload para esses três confrontos. Os conectores usam
+HTTPS fixo, timeouts/retries e cache de 30 minutos. **Limpar cache das fontes
+públicas** permite nova coleta. Falha da fonte gera erro, sem substituir dados
+reais por DEMO. O pacote de saída inclui hashes SHA-256 dos arquivos consultados.
+`available_at` das fontes públicas é conservadoramente o instante da coleta:
+não se presume saber quando cada linha apareceu no agregador no passado.
+
+### O que a probabilidade representa
+
+O cenário estima **P(candidato A obter pelo menos 270 eleitores | A e B disputam
+a eleição geral)**. Não inclui a probabilidade de indicação partidária,
+desistência, terceiro candidato ou eleição contingente na Câmara. Não é a chance
+incondicional de vencer entre todos os candidatos da Polymarket e não é ligada
+automaticamente a contratos desses mercados ou usada para calcular EV neles.
+Empate/ausência de maioria tem probabilidade separada; o modelo não decide o
+vencedor nesse caso. O dashboard não garante um vencedor futuro.
+
+### Estatística e incerteza
+
+Modelo bayesiano normal conjugado na escala logit, com aproximação amostral das
+pesquisas, distinto do binomial hierárquico da apuração:
+
+```
+logit(share_A_unit) = historical_unit_logit - historical_national_logit
+                     + national_level + region_effect + state_effect
+                     + district_effect_when_applicable
+poll_logit ~ Normal(unit_or_national_level + pollster_effect, poll_variance)
+```
+
+As pesquisas usam A/(A+B), amostra efetiva ajustada pelo suporte aos dois nomes e
+design effect padrão 1,5, piso de erro e desconto exponencial com meia-vida de
+45 dias. Pesquisas repetidas são rejeitadas/deduplicadas na ingestão; efeitos de
+instituto são compartilhados. Pesquisas de outro confronto/ciclo, publicadas ou
+concluídas depois do cutoff ou mais antigas que o máximo configurado são excluídas.
+
+Priors SD logit padrão: nível nacional 0,40; região 0,10; estado 0,15; instituto
+0,08; distrito 0,12 quando houver histórico específico ou 0,35 quando ausente.
+O nível nacional é centrado no histórico; demais efeitos são centrados em zero.
+Cada cenário Monte Carlo sorteia conjuntamente todos os parâmetros. Acrescenta
+erro eleitoral nacional compartilhado (SD 0,10) e deriva futura nacional
+(SD 0,20 × raiz dos anos até a eleição), mais deriva regional e estadual.
+Esses valores são **hipóteses configuráveis, ainda não calibradas por backtesting
+de múltiplas eleições**, e não estimativas garantidas de erro real.
+
+Estados sem pesquisa são extrapolados do perfil partidário histórico com incerteza.
+O conector público atual fornece pesquisas **nacionais**, não inventa pesquisas
+estaduais: o painel alerta que as projeções estaduais são extrapolações. Estados
+recebem seus eleitores winner-take-all, exceto Maine e Nebraska: dois eleitores
+estaduais mais um por distrito. Na ausência de histórico distrital, o prior vem
+do estado com variância distrital extra, hipótese explicitada na tabela. Pesos
+de votos populares são fixos no histórico, não um modelo dinâmico de participação.
+
+### CSV e DEMO
+
+**CSV do usuário** aceita outros confrontos e pesquisas estaduais/distritais.
+Baixe os cabeçalhos no painel; esquema em [data/us/README.md](data/us/README.md).
+Forneça 50 estados e DC no histórico, mesmo ano anterior ao ciclo projetado,
+`available_at` com fuso e URLs das fontes. Os votos/share_A históricos devem
+corresponder ao partido de A no confronto. Distritos são opcionais, mas, quando
+fornecidos, precisam do mesmo ciclo histórico. Fontes declaradas pelo usuário
+são validadas estruturalmente, não autenticadas automaticamente.
+
+**DEMO simulado** funciona offline, com seed 2028, nomes/histórico/pesquisas
+inteiramente fictícios e identificados. Apenas a alocação eleitoral é factual.
+Resultados dos três modos permanecem rotulados pela fonte e confronto originais,
+mesmo se o usuário mudar inputs sem recalcular. O JSON exporta parâmetros,
+pesquisas usadas, histórico, proveniência e diagnóstico; o SQLite preserva a
+versão separada `us-pre-election-gaussian-v1`.
 
 ## Modelo estatístico independente
 
@@ -273,15 +367,16 @@ e backtesting. Dados temporários podem desaparecer ao reiniciar o Streamlit Clo
 baixe os resultados importantes. Detalhes técnicos da falha ficam nos logs.
 
 ```
-app.py                     quatro páginas Streamlit / Plotly
+app.py                     cinco páginas Streamlit / Plotly
 main.py                    CLI DEMO, exportação e backend opcional PyMC
 config/settings.py         configuração validada
 src/collectors/            Gamma/CLOB, eleição sintética e leitura histórica
-src/models/                GLMM hierárquico, posterior e Monte Carlo
+src/models/                GLMM de apuração, modelo pré-eleitoral EUA e Monte Carlo
 src/analysis/              probabilidades, EV, risco e replay
 src/storage/database.py    snapshots SQLite
 src/utils/validation.py    validação e UTC
  data/demo/                fixtures claramente simuladas
+ data/us/                  esquema de pesquisas/histórico pré-eleitoral
  data/historical/          instruções para arquivos do usuário
  tests/                    parsing, erros HTTP, EV, temporalidade, modelo e UI
 ```
@@ -291,7 +386,7 @@ pagos, LLM na modelagem, fontes históricas reais inventadas ou execução finan
 
 ## Verificação desta implementação
 
-- 69 testes passaram, incluindo navegação nas quatro páginas, avanço do DEMO,
+- 90 testes passaram, incluindo navegação nas cinco páginas, avanço do DEMO,
   fallback offline, parsing Gamma/CLOB, custos/profundidade, determinismo,
   pooling, conclusão da eleição, isolamento de rótulos/preços futuros,
   orçamento, persistência append-only, journal compatível, fechamento após erro,
@@ -302,6 +397,12 @@ pagos, LLM na modelagem, fontes históricas reais inventadas ou execução finan
 - Evento real `presidential-election-winner-2028` consultado: 128 disputas;
   atualização por ID e livros YES/NO de duas disputas funcionaram. Testes locais
   cobrem troca de candidato, fallback ao evento e mensagens seguras de erro.
+- Modelo pré-eleitoral cobre alocação de 538 eleitores, distritos ME/NE,
+  probabilidade de ausência de maioria, determinismo, efeito das pesquisas,
+  filtros de publicação/ciclo/confronto, duplicatas, histórico futuro/misto,
+  ingestão de fontes públicas e preservação dos dois modelos no dashboard.
+- Os três confrontos públicos de 2028 foram consultados e calculados; os dados
+  atuais disponíveis são nacionais. A execução real não comprova calibração.
 - `streamlit run app.py` iniciou; `/_stcore/health` retornou HTTP 200.
 - Uma consulta pública real retornou um mercado com livros YES/NO e metadados
   de taxas, sem qualquer escrita nas APIs.
