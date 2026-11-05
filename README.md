@@ -209,12 +209,23 @@ apenas descritivos; validação requer várias eleições independentes.
 
 ## Persistência e arquitetura
 
-SQLite em `data/scanner.sqlite3`, escrita append-only, WAL, timestamps UTC.
+SQLite em `data/scanner.sqlite3`, escrita append-only, journal `DELETE` e timestamps UTC.
+O journal tradicional evita exigir suporte a WAL/shared memory do sistema de
+arquivos de hospedagem. Conexões aguardam bloqueios por até 30 segundos e são
+fechadas se a inicialização falhar.
 Tabelas separadas: markets, price_snapshots, election_partials, forecasts,
 opportunities, backtests. Previsões e avaliações preservam versão do modelo.
 Novas observações não sobrescrevem snapshots históricos; a interface evita
 inserir duplicatas idênticas na mesma sessão. Settings ficam na sessão Streamlit.
 Defina `SCANNER_DATABASE` para outro arquivo.
+
+No dashboard, se o arquivo configurado não puder ser aberto ou escrito, novos
+snapshots passam para um SQLite temporário por sessão, com aviso visível. O
+histórico anterior permanece no arquivo original; não é migrado automaticamente.
+Se até o armazenamento temporário falhar, a análise continua com aviso de que
+novos snapshots não estão sendo salvos. Esse tratamento também cobre previsões
+e backtesting. Dados temporários podem desaparecer ao reiniciar o Streamlit Cloud;
+baixe os resultados importantes. Detalhes técnicos da falha ficam nos logs.
 
 ```
 app.py                     quatro páginas Streamlit / Plotly
@@ -235,10 +246,11 @@ pagos, LLM na modelagem, fontes históricas reais inventadas ou execução finan
 
 ## Verificação desta implementação
 
-- 35 testes passaram, incluindo navegação nas quatro páginas, avanço do DEMO,
+- 39 testes passaram, incluindo navegação nas quatro páginas, avanço do DEMO,
   fallback offline, parsing Gamma/CLOB, custos/profundidade, determinismo,
   pooling, conclusão da eleição, isolamento de rótulos/preços futuros,
-  orçamento e persistência append-only.
+  orçamento, persistência append-only, journal compatível, fechamento após erro,
+  fallback de diretório sem escrita e funcionamento sem qualquer armazenamento.
 - `streamlit run app.py` iniciou; `/_stcore/health` retornou HTTP 200.
 - Uma consulta pública real retornou um mercado com livros YES/NO e metadados
   de taxas, sem qualquer escrita nas APIs.

@@ -1,6 +1,10 @@
 """Streamlit local dashboard. Analysis and simulation only."""
 import io
 import json
+import logging
+import sqlite3
+import tempfile
+from pathlib import Path
 from datetime import timedelta
 import pandas as pd
 import plotly.express as px
@@ -26,6 +30,8 @@ if 'progress' not in st.session_state:
     st.session_state.progress = 0.
     st.session_state.evolution = []
 settings = st.session_state.settings
+if st.session_state.get('storage_notice'):
+    st.warning(st.session_state.storage_notice)
 page = st.sidebar.radio('Página', ['Market Scanner', 'Election Forecast', 'Backtesting', 'Settings'])
 st.sidebar.info(f'Modo: {settings.mode}\n\nMotor rápido: posterior de Laplace; NUTS disponível via CLI.')
 
@@ -41,13 +47,38 @@ def get_snapshot(progress):
 
 
 def persist_once(key, table, payload, timestamp=None, version=None):
-    if st.session_state.get(key):
+    if st.session_state.get(key) or st.session_state.get('storage_disabled'):
         return
-    db = Database(settings.database)
+
+    def write(path):
+        db = Database(path)
+        try:
+            db.append(table, payload, timestamp=timestamp, model_version=version)
+        finally:
+            db.close()
+
     try:
-        db.append(table, payload, timestamp=timestamp, model_version=version)
-    finally:
-        db.close()
+        write(st.session_state.get('storage_path', settings.database))
+    except (sqlite3.OperationalError, OSError):
+        logging.getLogger(__name__).exception('Configured SQLite storage is unavailable')
+        try:
+            if st.session_state.get('storage_path'):
+                raise OSError('Temporary storage unavailable')
+            fallback = str(Path(tempfile.mkdtemp(prefix='polymarket-scanner-')) / 'scanner.sqlite3')
+            write(fallback)
+            st.session_state.storage_path = fallback
+            notice = ('Armazenamento configurado indisponível. Novos snapshots serão salvos em SQLite '
+                      'temporário desta sessão; podem ser perdidos ao reiniciar. O histórico anterior '
+                      'não foi movido. Baixe os resultados para preservá-los.')
+        except (sqlite3.OperationalError, OSError):
+            logging.getLogger(__name__).exception('Temporary SQLite storage is unavailable')
+            st.session_state.storage_disabled = True
+            notice = ('Persistência indisponível: a análise continua, mas novos snapshots não serão '
+                      'salvos nesta sessão. Baixe os resultados para preservá-los.')
+        st.session_state.storage_notice = notice
+        st.warning(notice)
+        if st.session_state.get('storage_disabled'):
+            return
     st.session_state[key] = True
 
 
@@ -212,9 +243,8 @@ elif page == 'Backtesting':
                     maximum_age_seconds=settings.maximum_age_seconds)
             result['source'] = source
             st.session_state.backtest = result
-            db = Database(settings.database)
-            db.append('backtests', {'source': source, **result}, model_version='hierarchical-logit-v1')
-            db.close()
+            persist_once(f'backtest:{utcnow().isoformat()}', 'backtests',
+                         {'source': source, **result}, version='hierarchical-logit-v1')
         except Exception as exc:
             st.error(f'Backtesting não executado: {exc}')
     if 'backtest' in st.session_state:

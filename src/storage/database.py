@@ -11,11 +11,18 @@ class Database:
     def __init__(self, path='data/scanner.sqlite3'):
         if str(path) != ':memory:':
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(path)
-        self.connection.execute('PRAGMA journal_mode=WAL')
-        for table in sorted(TABLES):
-            self.connection.execute(f'CREATE TABLE IF NOT EXISTS {table} (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, model_version TEXT, payload TEXT NOT NULL)')
-        self.connection.commit()
+        self.connection = sqlite3.connect(path, timeout=30)
+        try:
+            self.connection.execute('PRAGMA busy_timeout=30000')
+            # Rollback journals work on hosted filesystems that cannot support
+            # WAL shared-memory/locking. Never require WAL just to open the app.
+            self.connection.execute('PRAGMA journal_mode=DELETE')
+            for table in sorted(TABLES):
+                self.connection.execute(f'CREATE TABLE IF NOT EXISTS {table} (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, model_version TEXT, payload TEXT NOT NULL)')
+            self.connection.commit()
+        except Exception:
+            self.connection.close()
+            raise
 
     def append(self, table, payload, timestamp=None, model_version=None):
         if table not in TABLES:

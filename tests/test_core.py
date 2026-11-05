@@ -257,3 +257,30 @@ def test_no_trade_after_result_or_beyond_capital():
     unfunded = replay(h, times[-2:-1], .65, draws=500, price_history=prices,
                       fee_per_share=0, quantity=20000, initial_capital=1000)
     assert unfunded['trades'] == []
+
+
+def test_database_uses_portable_journal_and_reopens(tmp_path):
+    path = tmp_path / 'portable.sqlite3'
+    db = Database(path)
+    assert db.connection.execute('PRAGMA journal_mode').fetchone()[0] == 'delete'
+    assert db.connection.execute('PRAGMA busy_timeout').fetchone()[0] == 30000
+    db.append('markets', {'id': 'test'}, BASE_TIME)
+    db.close()
+    reopened = Database(path)
+    assert len(reopened.read('markets')) == 1
+    reopened.close()
+
+
+def test_database_closes_connection_after_initialization_failure(monkeypatch):
+    import sqlite3
+    class BrokenConnection:
+        closed = False
+        def execute(self, *args):
+            raise sqlite3.OperationalError('disk I/O error')
+        def close(self):
+            self.closed = True
+    connection = BrokenConnection()
+    monkeypatch.setattr(sqlite3, 'connect', lambda *a, **kw: connection)
+    with pytest.raises(sqlite3.OperationalError):
+        Database(':memory:')
+    assert connection.closed
