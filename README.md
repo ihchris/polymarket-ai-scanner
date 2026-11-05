@@ -65,6 +65,10 @@ O núcleo `evaluate` também aceita `ProbabilityEstimate` independente, sem LLM.
 2. Links `/event/slug`, `/event/slug/market-slug` e `/market/slug` são aceitos.
    Eventos com várias disputas exigem selecionar a disputa específica e tocar
    em **Atualizar verificações e preços**. Disputas únicas são verificadas de imediato.
+   A seleção usa IDs estáveis, não objetos ou slugs. A atualização consulta
+   `GET /markets/{id}`; se essa rota falhar, consulta novamente o evento original
+   e localiza o mesmo ID. Não reaproveita metadados antigos para confirmar vencedor.
+   Falhas exibem mensagens específicas para HTTP 403/404/429/5xx, timeout e rede.
 3. O painel mostra regras, fonte de resolução informada, cotações, timestamps e
    verificações entre Gamma/CLOB. Atualize manualmente para reconsultar as APIs.
    **Não informa vencedor com base apenas em preço 1/0, favorito ou encerramento.**
@@ -287,7 +291,7 @@ pagos, LLM na modelagem, fontes históricas reais inventadas ou execução finan
 
 ## Verificação desta implementação
 
-- 61 testes passaram, incluindo navegação nas quatro páginas, avanço do DEMO,
+- 69 testes passaram, incluindo navegação nas quatro páginas, avanço do DEMO,
   fallback offline, parsing Gamma/CLOB, custos/profundidade, determinismo,
   pooling, conclusão da eleição, isolamento de rótulos/preços futuros,
   orçamento, persistência append-only, journal compatível, fechamento após erro,
@@ -295,6 +299,9 @@ pagos, LLM na modelagem, fontes históricas reais inventadas ou execução finan
 - Consulta por link cobre validação de domínio/caminho, seleção de disputas,
   resolução explícita, preços 1/0 sem vencedor, tokens divergentes, resultado
   pendente, ausência de fallback fictício e uso de CSV sem vazamento temporal.
+- Evento real `presidential-election-winner-2028` consultado: 128 disputas;
+  atualização por ID e livros YES/NO de duas disputas funcionaram. Testes locais
+  cobrem troca de candidato, fallback ao evento e mensagens seguras de erro.
 - `streamlit run app.py` iniciou; `/_stcore/health` retornou HTTP 200.
 - Uma consulta pública real retornou um mercado com livros YES/NO e metadados
   de taxas, sem qualquer escrita nas APIs.

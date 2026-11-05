@@ -1,8 +1,10 @@
 """Resolve Polymarket links through allowlisted official APIs, never user URLs."""
 from dataclasses import dataclass
+import json
 import re
 from urllib.parse import urlsplit, unquote
 import httpx
+from pydantic import ValidationError
 from src.collectors.polymarket import GAMMA, CLOB, parse_market, parse_book
 from src.utils.validation import utcnow
 
@@ -49,6 +51,53 @@ def lookup_link(client, url):
         raise ValueError('A API não retornou mercados com dados válidos para esta disputa')
     return {'url': url.strip(), 'markets': markets, 'skipped': skipped,
             'fetched_at': utcnow().isoformat()}
+
+
+def refresh_selected_market(client, market_id, context_url):
+    """Use a stable Gamma ID, falling back to a freshly fetched original event.
+
+    Never use stale metadata to confirm a resolution if refresh fails.
+    """
+    market_id = str(market_id)
+    if not re.fullmatch(r'[0-9]+', market_id):
+        raise ValueError('Identificador de mercado inválido; analise o link novamente')
+    try:
+        market = parse_market(client.get(GAMMA, f'/markets/{market_id}'))
+        if market.id != market_id:
+            raise ValueError('Resposta Gamma não corresponde ao mercado selecionado')
+        return market
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        # Some deployments/API routes can fail on the individual-market lookup
+        # while the event endpoint remains available. Both paths fetch live data.
+        context = lookup_link(client, context_url)
+        for market in context['markets']:
+            if market.id == market_id:
+                return market
+        raise ValueError('A disputa selecionada não está mais disponível neste evento; analise o link novamente')
+
+
+def lookup_error_message(exc):
+    """Actionable public error without printing headers, bodies or credentials."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        if code == 429:
+            return 'A API da Polymarket limitou as consultas (HTTP 429). Aguarde e tente novamente.'
+        if code in {401, 403}:
+            return f'A API da Polymarket recusou o acesso deste servidor (HTTP {code}). Verifique os logs da hospedagem.'
+        if code == 404:
+            return 'A API não encontrou a disputa (HTTP 404). Analise o link novamente e selecione o candidato.'
+        return f'A API da Polymarket respondeu com erro HTTP {code}. Tente atualizar novamente.'
+    if isinstance(exc, httpx.TimeoutException):
+        return 'A API da Polymarket demorou para responder. Tente atualizar novamente.'
+    if isinstance(exc, httpx.NetworkError):
+        return 'Não foi possível conectar à API da Polymarket a partir deste servidor. Tente novamente.'
+    if isinstance(exc, ValueError) and not isinstance(exc, ValidationError):
+        # Locally generated validation messages are useful; malformed API JSON
+        # is represented by the generic schema-validation message below.
+        if isinstance(exc, json.JSONDecodeError):
+            return 'A API retornou uma resposta inválida. Tente atualizar novamente.'
+        return str(exc)
+    return 'A API retornou dados incompatíveis com o mercado selecionado. Consulte os logs da hospedagem.'
 
 
 def inspect_market(client, market, now=None):

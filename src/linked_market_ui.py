@@ -5,7 +5,7 @@ import logging
 import pandas as pd
 import streamlit as st
 from src.collectors.polymarket import PolymarketClient, Market
-from src.collectors.market_link import lookup_link, inspect_market
+from src.collectors.market_link import lookup_link, inspect_market, refresh_selected_market, lookup_error_message
 from src.collectors.historical import load_history
 from src.analysis.linked_election import analyze_election_csv
 from src.utils.validation import utc, utcnow
@@ -25,7 +25,7 @@ def linked_market_panel(settings, persist):
     if submitted:
         # Clear previous results before a failed/new request to avoid showing an
         # old winner under the newly entered link.
-        for key in ['linked_lookup', 'linked_report', 'linked_forecast', 'linked_selection']:
+        for key in ['linked_lookup', 'linked_report', 'linked_forecast', 'linked_selection', 'linked_market_id']:
             st.session_state.pop(key, None)
         client = PolymarketClient(retries=1)
         try:
@@ -36,7 +36,7 @@ def linked_market_panel(settings, persist):
                     st.session_state.linked_report = inspect_market(client, context['markets'][0])
         except Exception as exc:
             logging.getLogger(__name__).exception('Real market link lookup failed')
-            st.error(str(exc) if isinstance(exc, ValueError) else 'Não foi possível consultar a API oficial. Tente novamente. Nenhum dado DEMO foi usado.')
+            st.error(lookup_error_message(exc))
         finally:
             client.close()
     context = st.session_state.get('linked_lookup')
@@ -46,7 +46,12 @@ def linked_market_panel(settings, persist):
     if context['skipped']:
         st.warning(f'{context["skipped"]} disputas foram omitidas por dados inválidos na API.')
     markets = context['markets']
-    chosen = st.selectbox('Disputa específica', markets, format_func=lambda m: f'{m.title} · ID {m.id}', key='linked_selection')
+    by_id = {market.id: market for market in markets}
+    chosen_id = st.selectbox('Disputa específica', list(by_id),
+                            format_func=lambda mid: f'{by_id[mid].title} · ID {mid}', key='linked_market_id')
+    chosen = by_id[chosen_id]
+    if len(markets) > 1:
+        st.caption(f'Este evento contém {len(markets)} disputas. Selecione o candidato/resultado que deseja verificar.')
     if st.button('Atualizar verificações e preços', key='verify_link'):
         st.session_state.pop('linked_report', None)
         st.session_state.pop('linked_forecast', None)
@@ -54,14 +59,12 @@ def linked_market_panel(settings, persist):
         try:
             # Re-fetch metadata so resolution never relies on a stale cached
             # event snapshot while CLOB is queried again.
-            market = lookup_link(client, f'https://polymarket.com/market/{chosen.slug}')['markets'][0]
-            if market.id != chosen.id:
-                raise ValueError('O identificador do mercado mudou; consulte o link novamente')
+            market = refresh_selected_market(client, chosen.id, context['url'])
             with st.spinner('Conferindo resolução e livros de ofertas…'):
                 st.session_state.linked_report = inspect_market(client, market)
-        except Exception:
+        except Exception as exc:
             logging.getLogger(__name__).exception('Market verification failed')
-            st.error('Não foi possível atualizar as verificações. Consulte o link novamente.')
+            st.error(lookup_error_message(exc))
         finally:
             client.close()
     report = st.session_state.get('linked_report')

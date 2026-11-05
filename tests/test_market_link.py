@@ -164,3 +164,69 @@ def test_link_panel_real_lookup_offline_transport(tmp_path, monkeypatch):
     assert not app.exception
     assert app.error
     assert 'linked_report' not in app.session_state
+
+
+def test_refresh_uses_market_id_not_slug():
+    from src.collectors.market_link import refresh_selected_market
+    calls = []
+    def handle(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, json=raw_market())
+    client = PolymarketClient(transport=httpx.MockTransport(handle), retries=0)
+    market = refresh_selected_market(client, '101', 'https://polymarket.com/event/election')
+    assert market.id == '101'
+    assert calls == ['/markets/101']
+    client.close()
+
+
+def test_refresh_falls_back_to_fresh_event_when_individual_route_fails():
+    from src.collectors.market_link import refresh_selected_market
+    calls = []
+    def handle(request):
+        calls.append(request.url.path)
+        if request.url.path == '/markets/102':
+            return httpx.Response(503)
+        return httpx.Response(200, json={'markets': [raw_market(), {**raw_market(), 'id': '102', 'slug': 'changed-slug'}]})
+    client = PolymarketClient(transport=httpx.MockTransport(handle), retries=0)
+    market = refresh_selected_market(client, '102', 'https://polymarket.com/event/presidential-election-winner-2028')
+    assert market.id == '102' and market.slug == 'changed-slug'
+    assert calls == ['/markets/102', '/events/slug/presidential-election-winner-2028']
+    client.close()
+
+
+def test_failed_refresh_never_returns_stale_metadata():
+    from src.collectors.market_link import refresh_selected_market
+    client = PolymarketClient(transport=httpx.MockTransport(lambda r: httpx.Response(503)), retries=0)
+    with pytest.raises(httpx.HTTPStatusError):
+        refresh_selected_market(client, '101', 'https://polymarket.com/event/election')
+    client.close()
+
+
+@pytest.mark.parametrize('code', [403, 404, 429, 503])
+def test_lookup_failure_displays_safe_actionable_status(code):
+    from src.collectors.market_link import lookup_error_message
+    response = httpx.Response(code, request=httpx.Request('GET', 'https://gamma-api.polymarket.com/markets/101'), text='PRIVATE_BODY')
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        message = lookup_error_message(exc)
+    assert str(code) in message
+    assert 'PRIVATE_BODY' not in message
+
+
+def test_multi_market_selection_can_be_changed_and_refreshed(tmp_path, monkeypatch):
+    import src.linked_market_ui as ui
+    monkeypatch.setenv('SCANNER_DATABASE', str(tmp_path/'multi-ui.sqlite3'))
+    monkeypatch.setattr(ui, 'PolymarketClient', lambda **kwargs: client_for())
+    app = AppTest.from_file(Path(__file__).resolve().parents[1]/'app.py', default_timeout=30).run()
+    app.text_input[0].set_value('https://polymarket.com/event/presidential-election-winner-2028')
+    app.button[0].click().run()
+    assert not app.exception and not app.error
+    app.selectbox(key='linked_market_id').set_value('102').run()
+    app.button(key='verify_link').click().run()
+    assert not app.exception and not app.error
+    assert app.session_state['linked_report']['market']['id'] == '102'
+    app.selectbox(key='linked_market_id').set_value('101').run()
+    app.button(key='verify_link').click().run()
+    assert not app.exception and not app.error
+    assert app.session_state['linked_report']['market']['id'] == '101'
