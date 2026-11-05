@@ -54,6 +54,9 @@ class Market(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
     id: str
     title: str
+    slug: str = ''
+    condition_id: str | None = None
+    resolution_status: str | None = None
     description: str = ''
     resolution_rules: str = ''
     category: str = 'Other'
@@ -102,7 +105,9 @@ def array(value):
 
 
 def parse_market(raw):
-    return Market(id=str(raw['id']), title=raw['question'], description=raw.get('description') or '',
+    return Market(id=str(raw['id']), title=raw['question'], slug=raw.get('slug') or '',
+        condition_id=raw.get('conditionId'), resolution_status=raw.get('umaResolutionStatus'),
+        description=raw.get('description') or '',
         resolution_rules=raw.get('resolutionSource') or '', category=raw.get('category') or 'Other',
         outcomes=array(raw['outcomes']), token_ids=array(raw['clobTokenIds']),
         indicative_prices=array(raw.get('outcomePrices') or []), volume=float(raw.get('volume') or 0),

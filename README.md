@@ -48,15 +48,52 @@ python -m pytest -q
 - **Settings:** DEMO/LIVE_DATA, intervalo, liquidez, edge, quantidade, simulações,
   margem de slippage, taxa efetiva revisada e idade máxima. Configuração da sessão.
 
-LIVE_DATA significa **somente leitura**. Falhas de API ou ausência de livros
-válidos ativam DEMO com aviso. Livros individuais inválidos são omitidos sem
+LIVE_DATA significa **somente leitura**. No scanner geral, falhas de API ou ausência de livros
+válidos ativam DEMO com aviso. Na consulta por link não há substituição por DEMO.
+Livros individuais inválidos são omitidos sem
 substituir silenciosamente cotações reais por fictícias. Não há probabilidade
 inventada para mercados sem modelo: a interface mostra **“Sem modelo disponível”**.
-Somente o mercado fictício `demo-0` é associado explicitamente ao modelo eleitoral.
-Não se associa automaticamente título de mercado real a eleição sintética.
-Para ampliar a cobertura real, forneça uma fonte independente validada, mapeamento
-explícito de evento/resultado/token e revisão das regras; o núcleo `evaluate`
-aceita `ProbabilityEstimate`, sem depender de LLM.
+Somente o mercado fictício `demo-0` é associado automaticamente ao modelo eleitoral.
+Mercados reais podem receber dados eleitorais do usuário pelo fluxo abaixo, com
+mapeamento explícito e confirmação das regras; nunca recebem a eleição DEMO.
+O núcleo `evaluate` também aceita `ProbabilityEstimate` independente, sem LLM.
+
+## Analisar uma disputa real pelo link
+
+1. Em **Market Scanner**, cole a URL em **Link da disputa no Polymarket** e toque
+   em **Analisar link**. Funciona independentemente do modo do scanner geral.
+2. Links `/event/slug`, `/event/slug/market-slug` e `/market/slug` são aceitos.
+   Eventos com várias disputas exigem selecionar a disputa específica e tocar
+   em **Atualizar verificações e preços**. Disputas únicas são verificadas de imediato.
+3. O painel mostra regras, fonte de resolução informada, cotações, timestamps e
+   verificações entre Gamma/CLOB. Atualize manualmente para reconsultar as APIs.
+   **Não informa vencedor com base apenas em preço 1/0, favorito ou encerramento.**
+4. Um resultado é marcado `RESOLVED` somente com encerramento concordante,
+   tokens correspondentes, exatamente um campo `winner=true` no CLOB e ausência
+   de status de resolução pendente informado no Gamma. Divergências geram
+   `INCONSISTENT`; encerramento sem vencedor explícito fica aguardando resolução.
+5. Baixe o JSON de verificações para guardar as fontes e o instante consultado.
+
+Esse resultado é a resolução **na Polymarket**, não uma verificação externa
+independente do fato. Gamma e CLOB são interfaces da mesma plataforma. Disputas
+em aberto não têm um vencedor futuro verificável: o app informa quando não há
+modelo independente. Não existe previsão universal de eleições, esportes,
+cripto, notícias e outros eventos usando apenas uma URL.
+
+Para eleições reais de maioria simples com dois candidatos, expanda **Previsão
+eleitoral com dados independentes fornecidos por você**. Envie CSV no esquema
+abaixo, escolha o instante de corte, informe nomes dos candidatos e URL da fonte,
+associe a vitória de A a YES ou NO e confirme a correspondência com as regras.
+O modelo processa somente dados disponíveis até esse instante. Nenhum dado DEMO
+é injetado. A saída contém probabilidade, IC, candidato mais provável, custos/EV
+quando suficientes, hash SHA-256 do CSV, fonte declarada e versão do modelo.
+
+A autenticidade do CSV e da fonte declarada **não é verificada automaticamente**.
+O painel deixa isso explícito. A previsão é uma estimativa sujeita às limitações
+do modelo, não um resultado oficial nem garantia de vitória. Dados antigos e
+timestamps futuros são tratados; regras de resolução exigem confirmação manual.
+Esportes, eleições com outras regras e demais categorias precisam de modelos e
+conectores próprios antes de oferecer previsões independentes.
 
 ## Modelo estatístico independente
 
@@ -135,6 +172,10 @@ não geram probabilidades ou ordens artificiais.
   https://docs.polymarket.com/api-reference/orderbook/get-order-book-summary
 - CLOB `GET https://clob.polymarket.com/fee-rate?token_id=...`:
   https://docs.polymarket.com/developers/CLOB/introduction
+- Consulta por link: Gamma `GET /events/slug/{slug}`, `GET /markets/slug/{slug}`;
+  resolução explícita via CLOB `GET /markets/{condition_id}`. Os links de fontes
+  efetivamente consultadas aparecem no JSON e no painel. URLs do usuário não são
+  requisitadas diretamente: somente slugs validados e APIs oficiais fixas são usados.
 
 `outcomes` e `clobTokenIds` são mapeados por posição; JSON em strings é validado.
 `outcomePrices` é indicativo e nunca substitui ask. CLOB timestamp em milissegundos
@@ -246,11 +287,14 @@ pagos, LLM na modelagem, fontes históricas reais inventadas ou execução finan
 
 ## Verificação desta implementação
 
-- 39 testes passaram, incluindo navegação nas quatro páginas, avanço do DEMO,
+- 61 testes passaram, incluindo navegação nas quatro páginas, avanço do DEMO,
   fallback offline, parsing Gamma/CLOB, custos/profundidade, determinismo,
   pooling, conclusão da eleição, isolamento de rótulos/preços futuros,
   orçamento, persistência append-only, journal compatível, fechamento após erro,
   fallback de diretório sem escrita e funcionamento sem qualquer armazenamento.
+- Consulta por link cobre validação de domínio/caminho, seleção de disputas,
+  resolução explícita, preços 1/0 sem vencedor, tokens divergentes, resultado
+  pendente, ausência de fallback fictício e uso de CSV sem vazamento temporal.
 - `streamlit run app.py` iniciou; `/_stcore/health` retornou HTTP 200.
 - Uma consulta pública real retornou um mercado com livros YES/NO e metadados
   de taxas, sem qualquer escrita nas APIs.

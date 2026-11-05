@@ -20,6 +20,7 @@ from src.analysis.opportunities import evaluate
 from src.analysis.backtest import replay
 from src.storage.database import Database
 from src.utils.validation import utcnow
+from src.linked_market_ui import linked_market_panel
 
 st.set_page_config(page_title='Polymarket AI Scanner v2', page_icon='📊', layout='wide')
 st.title('Polymarket AI Scanner v2')
@@ -150,6 +151,11 @@ elif page == 'Election Forecast':
 
 elif page == 'Market Scanner':
     st.subheader('Market Scanner')
+    linked_market_panel(settings, persist_once)
+    st.divider()
+    if not st.checkbox('Mostrar scanner geral', value=not bool(st.session_state.get('linked_report'))):
+        st.stop()
+    st.markdown('**Scanner geral — conforme o modo em Settings**')
     st.caption('Preços de compra usam asks e profundidade. Último negócio e preços indicativos não são usados para EV.')
     st.button('Atualizar agora')
 
